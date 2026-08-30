@@ -6,20 +6,42 @@ import {
   streamDeck,
   DidReceiveSettingsEvent,
   KeyAction,
+  SendToPluginEvent,
+  JsonValue,
 } from '@elgato/streamdeck'
 import { runAppleScript } from 'run-applescript'
 import { removeEmojis } from '../utils/removeEmojis'
+
+// AppleScript subroutine to gain access to Event Kit
+const eventStoreAccessScript = `on create_event_store_access()
+  set theEKEventStore to current application's EKEventStore's alloc()'s init()
+  theEKEventStore's requestAccessToEntityType:0 completion:(missing value)
+  set authorizationStatus to current application's EKEventStore's authorizationStatusForEntityType:0
+  if authorizationStatus is not 3 then
+  display dialog "Access must be given in System Preferences" & linefeed & "-> Security & Privacy first." buttons {"OK"} default button 1
+  tell application "System Preferences"
+  activate
+  tell pane id "com.apple.preference.security" to reveal anchor "Privacy"
+  end tell
+  error number -128
+  return false
+  else
+  return theEKEventStore
+  end if
+end create_event_store_access`
 
 type ReminderSettings = {
   wakeBeforeMins?: number
   sleepAfterMins?: number
   backgroundImg?: string
+  backgroundColor?: string
   timeTextSize?: string
   timeTextColor?: string
   timePosY?: string
   eventTextSize?: string
   eventTextColor?: string
   eventPosY?: string
+  calendars?: string | string[]
   isDemo?: string
 }
 
@@ -93,6 +115,66 @@ export class CalendarReminder extends SingletonAction<ReminderSettings> {
     this.update(ev.action)
   }
 
+  // datasource for the calendar picker in the property inspector
+  override async onSendToPlugin(
+    ev: SendToPluginEvent<JsonValue, ReminderSettings>,
+  ): Promise<void> {
+    const payload = ev.payload
+    if (
+      typeof payload !== 'object' ||
+      payload === null ||
+      !('event' in payload) ||
+      payload.event !== 'getCalendars'
+    ) {
+      return
+    }
+
+    const names = await this.listCalendarNames()
+    streamDeck.ui.current?.sendToPropertyInspector({
+      event: 'getCalendars',
+      items: names.map((name) => ({ label: name, value: name })),
+    })
+  }
+
+  // list all calendar names with AppleScriptObjC
+  private async listCalendarNames(): Promise<string[]> {
+    let res: string
+    try {
+      res = await runAppleScript(`use AppleScript version "2.4"
+use scripting additions
+use framework "Foundation"
+use framework "EventKit"
+
+-- gain access to Event Kit
+set theEKEventStore to create_event_store_access()
+
+-- if no access is allowed to Event Kit, then exit script
+if theEKEventStore is false then return ""
+
+-- get calendars that can store events
+set theCalendars to theEKEventStore's calendarsForEntityType:0
+
+set nameList to current application's NSMutableArray's array()
+repeat with aCal in theCalendars
+  nameList's addObject:(aCal's title())
+end repeat
+return (nameList's componentsJoinedByString:linefeed) as text
+
+${eventStoreAccessScript}
+`)
+    } catch (err) {
+      // e.g. calendar access was denied, which aborts the script
+      streamDeck.logger.warn('Could not list calendars', err)
+      return []
+    }
+
+    const names = res
+      .split('\n')
+      .map((name) => name.trim())
+      .filter(Boolean)
+    return [...new Set(names)].sort()
+  }
+
   private async update(action: Action) {
     if (this.settings.isDemo) {
       this.draw(action, { title: 'Test Event', date: new Date() })
@@ -119,8 +201,13 @@ export class CalendarReminder extends SingletonAction<ReminderSettings> {
       hour12: false,
     })
 
+    const backgroundRect = this.settings.backgroundColor
+      ? `<rect x="0" y="0" width="100" height="100" fill="${this.settings.backgroundColor}" />`
+      : ''
+
     const svg = `
 <svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  ${backgroundRect}
   <image x="0" y="0" href="${this.settings.backgroundImg || ''}" height="100" width="100" />
   <text x="50%" y="${this.settings.timePosY ?? '50px'}" dominant-baseline="middle" text-anchor="middle" font-size="${this.settings.timeTextSize ?? '21'}" fill="${this.settings.timeTextColor ?? 'white'}" font-weight="bold">
     ${timeString}
@@ -145,6 +232,29 @@ export class CalendarReminder extends SingletonAction<ReminderSettings> {
   private async getCalendarEvent(settings: ReminderSettings) {
     const after = settings.sleepAfterMins ?? 10
     const before = settings.wakeBeforeMins ?? 10
+
+    // selected calendar names; empty means all calendars
+    const rawCalendars = settings.calendars ?? []
+    const calendarNames = (
+      Array.isArray(rawCalendars) ? rawCalendars : rawCalendars.split(',')
+    )
+      .map((name) => name.trim())
+      .filter(Boolean)
+
+    const calendarFilter =
+      calendarNames.length > 0
+        ? `
+-- keep only the calendars picked in the settings
+set allowedNames to {${calendarNames.map((name) => JSON.stringify(name)).join(', ')}}
+set pickedCals to current application's NSMutableArray's array()
+repeat with aCal in theCalendars
+  if allowedNames contains ((aCal's title()) as text) then
+    pickedCals's addObject:aCal
+  end if
+end repeat
+set theCalendars to pickedCals
+`
+        : ''
 
     // thanks chatgpt, it was horrible to create this applescript with you.
     // what even is this language lol
@@ -171,7 +281,7 @@ theEKEventStore's refreshSourcesIfNecessary()
 
 -- get calendars that can store events
 set theCalendars to theEKEventStore's calendarsForEntityType:0
-
+${calendarFilter}
 -- find all events across calendars
 set thePred to theEKEventStore's predicateForEventsWithStartDate:startTime endDate:endTime calendars:theCalendars
 set theEvents to (theEKEventStore's eventsMatchingPredicate:thePred)
@@ -216,23 +326,7 @@ else
   return "_CAL_NO_EVENTS"
 end if
 
--- subroutine to gain access to Event Kit
-on create_event_store_access()
-  set theEKEventStore to current application's EKEventStore's alloc()'s init()
-  theEKEventStore's requestAccessToEntityType:0 completion:(missing value)
-  set authorizationStatus to current application's EKEventStore's authorizationStatusForEntityType:0
-  if authorizationStatus is not 3 then
-  display dialog "Access must be given in System Preferences" & linefeed & "-> Security & Privacy first." buttons {"OK"} default button 1
-  tell application "System Preferences"
-  activate
-  tell pane id "com.apple.preference.security" to reveal anchor "Privacy"
-  end tell
-  error number -128
-  return false
-  else
-  return theEKEventStore
-  end if
-end create_event_store_access
+${eventStoreAccessScript}
 `)
 
     if (res === '_CAL_NO_EVENTS') {
