@@ -138,7 +138,9 @@ export class CalendarReminder extends SingletonAction<ReminderSettings> {
 
   // list all calendar names with AppleScriptObjC
   private async listCalendarNames(): Promise<string[]> {
-    const res = await runAppleScript(`use AppleScript version "2.4"
+    let res: string
+    try {
+      res = await runAppleScript(`use AppleScript version "2.4"
 use scripting additions
 use framework "Foundation"
 use framework "EventKit"
@@ -160,6 +162,11 @@ return (nameList's componentsJoinedByString:linefeed) as text
 
 ${eventStoreAccessScript}
 `)
+    } catch (err) {
+      // e.g. calendar access was denied, which aborts the script
+      streamDeck.logger.warn('Could not list calendars', err)
+      return []
+    }
 
     const names = res
       .split('\n')

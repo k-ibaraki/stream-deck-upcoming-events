@@ -19,6 +19,14 @@ Uses macOS' native calendar integration. It works with any events that are conne
 - When an event is about to start, it shows the start time and title of the event on the key. Clicking the key will open the first link in the event's description, which is often a link to a meeting.
 - When no event is about to start, it shows a static image, which you can override. Clicking the key will re-check upcoming events.
 
+### Filtering calendars
+
+By default, events from every calendar in Calendar.app are considered. The "Calendars" setting lists all of your calendars — check the ones you want to be reminded about, and events from the others are ignored. Leaving all of them unchecked keeps the default behavior of watching every calendar.
+
+### Background color
+
+The "Background color" setting fills the key with a solid color while an event is upcoming. A background image, if you set one, is drawn on top of it.
+
 ### Screenshots
 
 ![](/.github/upcoming.png)
