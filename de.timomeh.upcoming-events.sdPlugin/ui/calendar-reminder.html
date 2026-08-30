@@ -50,6 +50,13 @@
     <sdpi-item label="Event position from top">
       <sdpi-textfield setting="eventPosY" placeholder="50px"></sdpi-textfield>
     </sdpi-item>
+    <sdpi-item label="Calendars (none checked = all)">
+      <sdpi-checkbox-list
+        setting="calendars"
+        datasource="getCalendars"
+        loading="Loading calendars..."
+      ></sdpi-checkbox-list>
+    </sdpi-item>
     <sdpi-item label="Demo">
       <sdpi-checkbox
         setting="isDemo"
