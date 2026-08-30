@@ -34,6 +34,7 @@ type ReminderSettings = {
   wakeBeforeMins?: number
   sleepAfterMins?: number
   backgroundImg?: string
+  backgroundColor?: string
   timeTextSize?: string
   timeTextColor?: string
   timePosY?: string
@@ -193,8 +194,13 @@ ${eventStoreAccessScript}
       hour12: false,
     })
 
+    const backgroundRect = this.settings.backgroundColor
+      ? `<rect x="0" y="0" width="100" height="100" fill="${this.settings.backgroundColor}" />`
+      : ''
+
     const svg = `
 <svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  ${backgroundRect}
   <image x="0" y="0" href="${this.settings.backgroundImg || ''}" height="100" width="100" />
   <text x="50%" y="${this.settings.timePosY ?? '50px'}" dominant-baseline="middle" text-anchor="middle" font-size="${this.settings.timeTextSize ?? '21'}" fill="${this.settings.timeTextColor ?? 'white'}" font-weight="bold">
     ${timeString}
